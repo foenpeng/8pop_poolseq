@@ -34,6 +34,9 @@ Fst[,(22:49):=lapply(.SD, function(x) replace(x, which(x ==1), 0.99)),.SDcols=22
 
 pop_list<-c("boot","echo","fred","gos","law","pach","rob","say")
 
+#################################################################
+#  2.  Pairwise analysis
+#################################################################
 
 # read only relevant data
 # pop1 should be the one with first letter in front of pop2, e.g. "g" > "r", for the sake of mathing pairwise comparison in gos_vs_rob
@@ -52,8 +55,8 @@ setnames(pop1_pop2_Fst,-(1:4),c("pop1_N_A","pop2_N_A","outgroup_N_A",
                                 "pop1_pop2_Fst","pop1_outgroup_Fst","pop2_outgroup_Fst"))
 
 #################################################################
-#  3.  Calculate PBS and other statistics
-#################################################################
+#  1.  Calculate PBS and other statistics
+
 
 {
   # calculate allele frequency
@@ -67,8 +70,8 @@ setnames(pop1_pop2_Fst,-(1:4),c("pop1_N_A","pop2_N_A","outgroup_N_A",
   pop1_pop2_Fst[,pbs.o := ((-log(1- pop1_outgroup_Fst)) + (- log(1-pop2_outgroup_Fst)) - (- log(1-pop1_pop2_Fst)))/2]
 }
 #################################################################
-#  5. sliding window
-#################################################################
+#  2. sliding window
+
 {
   windowsize <- 50000
   stepsize<-10000
@@ -93,8 +96,8 @@ setnames(pop1_pop2_Fst,-(1:4),c("pop1_N_A","pop2_N_A","outgroup_N_A",
   pop1_pop2_slide[,Pos:=(window_end+window_start)/2]
 }
 #################################################################
-#  6.  Plotting results
-#################################################################
+#  3.  Plotting results
+
 
 ##### Plot binned genomic map, modified from Dan's plot function from file Graphics function.R
 
@@ -138,3 +141,38 @@ plotgene_bin <- function(dat, pop, focalLG, specifybps = F, minpos, maxpos, Gene
     dev.off()
   } 
 }
+
+#################################################################
+#  3.  All comparison analysis
+#################################################################
+
+fib_list<-c("boot","echo","fred","gos","law","pach","rob")
+pop_h_list<-c("boot","fred","law","rob")
+pop_l_list<-c("echo","gos","pach")
+
+generate_pop_list<-function(list){
+  all_comb<-t(combn(list,2))
+  return(paste0(all_comb[,1],"_vs_",all_comb[,2]))
+}
+
+hh_list<-generate_pop_list(fib_h_list)
+ll_list<-generate_pop_list(fib_l_list)
+all_list<-generate_pop_list(fib_list)
+hl_list<-all_list[!(all_list %in% hh_list | all_list %in% ll_list)]
+
+avg_dist<-function(y) sum(unlist(lapply(y,function(x) -log(1-x))),na.rm=T)
+snp_num<-nrow(Fst)
+Fst[,D_hl:=avg_dist(.SD),.SD=hl_list,by=seq_len(snp_num)]
+Fst[,D_hh:=avg_dist(.SD),.SD=hh_list,by=seq_len(snp_num)]
+Fst[,D_ll:=avg_dist(.SD),.SD=ll_list,by=seq_len(snp_num)]
+Fst[,pbs:=(D_hl-(D_hh*3+D_ll*6))/12,by=seq_len(snp_num)]
+
+
+# sliding window
+windowsize <- 500
+stepsize<-250
+
+chr <- Fst[, .(chr_snp=.N), by = LGn]
+chr_slide<-chr[rep(1:.N,(chr_snp)%/%stepsize)][,.(window_start=(0:.N)*stepsize, window_end=((0:.N)*stepsize+windowsize),chr_snp=chr_snp), by = LGn]
+chr_slide<-chr_slide[window_end<chr_snp+stepsize]
+pop1_pop2_Fst[,Pos_join:=Pos]

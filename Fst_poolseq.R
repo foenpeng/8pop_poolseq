@@ -24,6 +24,10 @@ setwd("D:/Foen Peng/OneDrive - University of Connecticut/Poolseq_8pops")
 
 Fst<- fread("./processed_data/Fst_8pops.csv", header = T)
 Fst_sample<- fread("./processed_data/Fst_8pops.csv", header = T, nrows=10)
+# read population Fst as data frame, becasue data table does not support row names
+Fst_genome<-read.csv("./result/pop_pairwise_Fst.csv", header = T)
+row.names(Fst_genome)<-colnames(Fst_genome)
+Fst_genome<-as.matrix(Fst_genome)
 
 # change LG name, 1000 means mitochondial DNA, NA means unmapped
 Fst[substr(LG, 1, 2) == "ch", LGn := as.numeric(as.roman(substr(LG, 4, nchar(LG))))]
@@ -150,29 +154,97 @@ fib_list<-c("boot","echo","fred","gos","law","pach","rob")
 pop_h_list<-c("boot","fred","law","rob")
 pop_l_list<-c("echo","gos","pach")
 
+
 generate_pop_list<-function(list){
   all_comb<-t(combn(list,2))
   return(paste0(all_comb[,1],"_vs_",all_comb[,2]))
 }
 
-hh_list<-generate_pop_list(fib_h_list)
-ll_list<-generate_pop_list(fib_l_list)
+hh_list<-generate_pop_list(pop_h_list)
+ll_list<-generate_pop_list(pop_l_list)
 all_list<-generate_pop_list(fib_list)
 hl_list<-all_list[!(all_list %in% hh_list | all_list %in% ll_list)]
 
+setcolorder(Fst,c(hh_list,hl_list,ll_list))
+
+# Tau_Foen: calculate the branch lenth between h and L pops: (D_hl - D_hh*N_ll/(N_hh-1) -D_ll*N_hh/(N_ll-1))/N_hl
 avg_dist<-function(y) sum(unlist(lapply(y,function(x) -log(1-x))),na.rm=T)
 snp_num<-nrow(Fst)
 Fst[,D_hl:=avg_dist(.SD),.SD=hl_list,by=seq_len(snp_num)]
 Fst[,D_hh:=avg_dist(.SD),.SD=hh_list,by=seq_len(snp_num)]
 Fst[,D_ll:=avg_dist(.SD),.SD=ll_list,by=seq_len(snp_num)]
-Fst[,pbs:=(D_hl-(D_hh*3+D_ll*6))/12,by=seq_len(snp_num)]
+Fst[,pbs:=(D_hl-(D_hh*3/5+D_ll*6/2))/12,by=seq_len(snp_num)]
+
+# Tau_Foen: correct for phylogeny
+phy_correction<-function(comparison, value, matrix){
+  pops <- unlist(strsplit(comparison, split="_vs_"))
+  correct <- value-matrix[pops[1],pops[2]]
+  return(correct)
+}
+
+Fst_phy_correct<-data.table(LGn=Fst[,LGn],Pos=Fst[,Pos])
+for(i in all_list){
+  Fst_phy_correct[,(i):=phy_correction(i,Fst[,get(i)],Fst_genome)]
+}
 
 
-# sliding window
+
+# sliding window by SNP numbers
 windowsize <- 500
 stepsize<-250
 
 chr <- Fst[, .(chr_snp=.N), by = LGn]
 chr_slide<-chr[rep(1:.N,(chr_snp)%/%stepsize)][,.(window_start=(0:.N)*stepsize, window_end=((0:.N)*stepsize+windowsize),chr_snp=chr_snp), by = LGn]
 chr_slide<-chr_slide[window_end<chr_snp+stepsize]
-pop1_pop2_Fst[,Pos_join:=Pos]
+Fst[,Pos_join:= rowid(LGn)]
+Tau_slide<-Fst[chr_slide, 
+               on=c("LGn","Pos_join>window_start","Pos_join<window_end"), 
+               allow.cartesian=T][,.("PBS.nSNPs" = .N,
+                                     "Pos_start" = min(Pos),
+                                     "Pos_end" = max(Pos),
+                                     "Pos" = (max(Pos)+min(Pos))/2, 
+                                     "PBSm" = mean(pbs,na.rm=T)),
+                                  by=.(LGn,Pos_join)]
+
+
+plotgene_bin <- function(dat, pop, focalLG, specifybps = F, minpos, maxpos, Genestart, Geneend, Genename, statstoplot){
+  npops <- length(statstoplot)
+  par(mfrow = c(npops,1),mar = c(1.5,4,0.5,0.5), mgp = c(2, 0.75, 0), oma = c(3,0,2,0))
+  if(specifybps == F){
+    minpos <- 0
+    maxpos <- dat[LGn==focalLG,max(Pos)]
+  }
+  options(scipen=5)
+  col<-c("darkblue","darkred","darkgreen","darkorange","darkmagenta")
+  for(i in 1:length(statstoplot)){
+    y_lim=c(-0.6,0.6)
+    plot(dat[LGn %in% c(focalLG) & Pos > minpos & Pos < maxpos,.(Pos/1000000,eval(parse(text = statstoplot[i])))],pch = 16, cex = 0.6, axes = F,ylim=y_lim, xlab = paste("Chromosome",focalLG), ylab = statstoplot[i],col=col[i])
+    abline(v=dat[LGn %in% c(focalLG) & Pos > minpos & Pos < maxpos & eval(parse(text = paste(statstoplot[i],".focal",sep=""))),Pos/1000000],col=rgb(red=0,green=0,blue=0,alpha=100,maxColorValue = 255))
+    ticks<-seq(0,max(dat[LGn %in% c(focalLG),Pos])/1e6,1)
+    axis(1, at=seq(0,maxpos/1e6,0.5), labels = F)
+    axis(1, at=seq(0,maxpos/1e6,1), labels = seq(0,maxpos/1e6,1))
+    axis(2)
+  }
+  mtext(paste("Chromosome",focalLG, "1:",pop[1],"  2:",pop[2]),side=1,line=1, outer = TRUE)
+}
+
+
+{
+  dat_plot <- Tau_slide
+  statstoplot = c("PBSm")
+  
+  cutoff_calculation<-function(var, data=dat_plot, threshold=0.99){
+    var.cutoff <- quantile(data[,get(var)],threshold,na.rm=T)
+    data[,paste0(var,".focal"):= ifelse(get(var)> var.cutoff, T, F)]
+  }
+  
+  lapply(statstoplot,cutoff_calculation)
+  
+  
+  for (chromosome in 1:21) {
+    #png(filename=sprintf("./result/chr_map_50k_slide/chr%s.%s_%s.divergence_0.99.png", chromosome,pop1,pop2),width = 3000, height = 2000,res=300)
+    plotgene_bin(dat_plot,pop=c("",""), focalLG=chromosome, statstoplot=statstoplot)
+    #dev.off()
+  } 
+}
+

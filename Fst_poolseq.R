@@ -31,6 +31,7 @@ Fst_genome<-as.matrix(Fst_genome)
 
 # change LG name, 1000 means mitochondial DNA, NA means unmapped
 Fst[substr(LG, 1, 2) == "ch", LGn := as.numeric(as.roman(substr(LG, 4, nchar(LG))))]
+Fst[is.na(LGn),LGn:=100]
 # replace all the negative and na values with 0
 Fst[,(22:49):=lapply(.SD, function(x) replace(x, which(x < 0 | is.na(x)), 0)),.SDcols=22:49]
 # replace all the 1 with 0.99
@@ -168,12 +169,18 @@ hl_list<-all_list[!(all_list %in% hh_list | all_list %in% ll_list)]
 setcolorder(Fst,c(hh_list,hl_list,ll_list))
 
 # Tau_Foen: calculate the branch lenth between h and L pops: (D_hl - D_hh*N_ll/(N_hh-1) -D_ll*N_hh/(N_ll-1))/N_hl
-avg_dist<-function(y) sum(unlist(lapply(y,function(x) -log(1-x))),na.rm=T)
-snp_num<-nrow(Fst)
-Fst[,D_hl:=avg_dist(.SD),.SD=hl_list,by=seq_len(snp_num)]
-Fst[,D_hh:=avg_dist(.SD),.SD=hh_list,by=seq_len(snp_num)]
-Fst[,D_ll:=avg_dist(.SD),.SD=ll_list,by=seq_len(snp_num)]
-Fst[,pbs:=(D_hl-(D_hh*3/5+D_ll*6/2))/12,by=seq_len(snp_num)]
+sum_dist<-function(y) sum(unlist(lapply(y,function(x) -log(1-x))),na.rm=T)
+
+
+pbs_cal<-function(data,dist_fun,hl=hl_list,hh=hh_list,ll=ll_list){
+  snp_num<-nrow(data)
+  data[,D_hl:=sum_dist(.SD),.SD=hl_list,by=seq_len(snp_num)]
+  data[,D_hh:=sum_dist(.SD),.SD=hh_list,by=seq_len(snp_num)]
+  data[,D_ll:=sum_dist(.SD),.SD=ll_list,by=seq_len(snp_num)]
+  data[,pbs:=(D_hl-(D_hh*3/5+D_ll*6/2))/12,by=seq_len(snp_num)]
+}
+
+pbs_cal(data=Fst,dist_fun = sum_dist)
 
 # Tau_Foen: correct for phylogeny
 phy_correction<-function(comparison, value, matrix){
@@ -187,27 +194,35 @@ for(i in all_list){
   Fst_phy_correct[,(i):=phy_correction(i,Fst[,get(i)],Fst_genome)]
 }
 
+pbs_cal(data=Fst_phy_correct,dist_fun = sum_dist)
 
+###### creating sliding window by SNP numbers
 
-# sliding window by SNP numbers
 windowsize <- 500
 stepsize<-250
-
-chr <- Fst[, .(chr_snp=.N), by = LGn]
-chr_slide<-chr[rep(1:.N,(chr_snp)%/%stepsize)][,.(window_start=(0:.N)*stepsize, window_end=((0:.N)*stepsize+windowsize),chr_snp=chr_snp), by = LGn]
+setkeyv(Fst,c("LGn","Pos"))
+chr <- Fst[, .(chr_snp=.N,chr_length = max(Pos)), by = LGn]
+chr[,Cumulative_Chrlengths:=cumsum(chr_length)]
+chr[,Cumulative_ChrSTART := c(0, Cumulative_Chrlengths[-length(Cumulative_Chrlengths)])]
+chr_slide<-chr[rep(1:.N,(chr_snp)%/%stepsize)][,.(window_start=(0:.N)*stepsize, window_end=((0:.N)*stepsize+windowsize),chr_snp=chr_snp,chr_length, cum_chr_start=Cumulative_ChrSTART), by = LGn]
 chr_slide<-chr_slide[window_end<chr_snp+stepsize]
-Fst[,Pos_join:= rowid(LGn)]
-Tau_slide<-Fst[chr_slide, 
+
+slide_data<-Fst_phy_correct
+slide_data[,Pos_join:= rowid(LGn)]
+Tau_slide<-slide_data[chr_slide, 
                on=c("LGn","Pos_join>window_start","Pos_join<window_end"), 
                allow.cartesian=T][,.("PBS.nSNPs" = .N,
                                      "Pos_start" = min(Pos),
                                      "Pos_end" = max(Pos),
                                      "Pos" = (max(Pos)+min(Pos))/2, 
-                                     "PBSm" = mean(pbs,na.rm=T)),
+                                     "Pos_cum" = (max(Pos)+min(Pos))/2 + max(cum_chr_start),
+                                     "PBSm_phy_correct" = mean(pbs,na.rm=T)),
                                   by=.(LGn,Pos_join)]
 
 
-plotgene_bin <- function(dat, pop, focalLG, specifybps = F, minpos, maxpos, Genestart, Geneend, Genename, statstoplot){
+# function to plot per chromosome map
+{
+  plot_bin_LG <- function(dat, pop, focalLG, specifybps = F, minpos, maxpos, Genestart, Geneend, Genename, statstoplot){
   npops <- length(statstoplot)
   par(mfrow = c(npops,1),mar = c(1.5,4,0.5,0.5), mgp = c(2, 0.75, 0), oma = c(3,0,2,0))
   if(specifybps == F){
@@ -225,13 +240,36 @@ plotgene_bin <- function(dat, pop, focalLG, specifybps = F, minpos, maxpos, Gene
     axis(1, at=seq(0,maxpos/1e6,1), labels = seq(0,maxpos/1e6,1))
     axis(2)
   }
-  mtext(paste("Chromosome",focalLG, "1:",pop[1],"  2:",pop[2]),side=1,line=1, outer = TRUE)
+  mtext(paste("Chromosome",focalLG),side=1,line=1, outer = TRUE)
+  }
 }
+
+# function to plot genome map
+{
+  plot_bin_genome <- function(dat, statstoplot){
+
+    chrcol <- ifelse(dat[,eval(parse(text = paste(statstoplot,".focal",sep="")))], 1, "grey60")
+    y_lim<-c(dat[,min(eval(parse(text = statstoplot)))*1.2],dat[,max(eval(parse(text = statstoplot)))*1.2])
+    plot(dat[,Pos_cum],dat[,eval(parse(text = statstoplot))], col=chrcol,axes=F, xlab = "Linkage Group", ylab = statstoplot,pch=16,cex=0.6, ylim = y_lim)
+    #text(dat[sig==T,Cumulative_position],dat[sig==T,abs_Z], labels = dat[sig==T,snp.id],cex=0.7, pos=2)
+    abline(h=dat[eval(parse(text = paste(statstoplot,".focal",sep="")))==FALSE, max(eval(parse(text = statstoplot)))], lty=5, col='black')
+    abline(v=dat[eval(parse(text = paste(statstoplot,".focal",sep="")))==TRUE, Pos_cum], lty=1, col=rgb(0,0,0,alpha=0.3))
+    Chr.mid <- dat[,(min(Pos_cum)+max(Pos_cum))/2,by=LGn][,V1]
+    axis(2)
+    axis(1, at= c(dat[,min(Pos_cum),by=LGn][,V1],dat[,max(Pos_cum)]), labels = c(1:21,"Un",NA))
+    rect(dat[,min(Pos_cum),by=LGn][,V1],y_lim[1],dat[,max(Pos_cum),by=LGn][,V1],y_lim[2],border = rgb(0,0,0,0.5), lwd = 2, col= rep(c(NA,rgb(0,0,0,alpha=0.1)),12) )
+
+  }
+}
+
+
+
+
 
 
 {
   dat_plot <- Tau_slide
-  statstoplot = c("PBSm")
+  statstoplot = c("PBSm_phy_correct")
   
   cutoff_calculation<-function(var, data=dat_plot, threshold=0.99){
     var.cutoff <- quantile(data[,get(var)],threshold,na.rm=T)
@@ -240,11 +278,14 @@ plotgene_bin <- function(dat, pop, focalLG, specifybps = F, minpos, maxpos, Gene
   
   lapply(statstoplot,cutoff_calculation)
   
+  png(sprintf("./result/%s_genome.png",statstoplot), width = 5000, height = 2000,res=350)  
+  plot_bin_genome(dat=dat_plot,statstoplot)
+  dev.off()
   
   for (chromosome in 1:21) {
-    #png(filename=sprintf("./result/chr_map_50k_slide/chr%s.%s_%s.divergence_0.99.png", chromosome,pop1,pop2),width = 3000, height = 2000,res=300)
-    plotgene_bin(dat_plot,pop=c("",""), focalLG=chromosome, statstoplot=statstoplot)
-    #dev.off()
+    png(filename=sprintf("./result/chr_500SNP_slide_PBSm_phy_correct/chr%s.divergence_0.99.png", chromosome),width = 4000, height = 2000,res=300)
+    plot_bin_LG(dat_plot,pop=c("",""), focalLG=chromosome, statstoplot=statstoplot)
+    dev.off()
   } 
 }
 

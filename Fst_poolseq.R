@@ -39,14 +39,49 @@ Fst[,(22:49):=lapply(.SD, function(x) replace(x, which(x ==1), 0.99)),.SDcols=22
 
 pop_list<-c("boot","echo","fred","gos","law","pach","rob","say")
 
+# import gene information
+## function to convert linkage group names from string to numeric number
+{
+  convert_LG_name<-function(dataset, LG_column){
+    dataset[substr(get(LG_column), 1, 2) == "MT", LGn := 0]
+    dataset[substr(get(LG_column), 1, 2) == "gr", LGn := as.numeric(as.roman(substr(get(LG_column), 6, nchar(get(LG_column)))))]
+    dataset[substr(get(LG_column), 1, 2) == "sc", LGn := as.numeric(substr(get(LG_column), 10, nchar(get(LG_column))))]
+  }
+  gene_loc<-unique(fread("../Analysis_Expression/Data files RAW/GeneLocations.csv",sep=","))
+  gene_name<-fread("../Analysis_Expression/Data files RAW/GeneID_to_GeneName.csv")
+  gene_LG<-fread("../Analysis_Expression/Data files RAW/GeneID to LinkageGroup.csv",header = TRUE)
+  setnames(gene_name,c("Ensembl Gene ID","Associated Gene Name"),c("GeneID","gene.name"))
+  convert_LG_name(gene_LG, "LinkageGroup")
+  # LG file has a space at the begining of GeneID.
+  gene_LG[,GeneID:=substring(V1,2)]
+  
+  setkey(gene_loc,GeneID)
+  setkey(gene_LG, GeneID)
+  setkey(gene_name,GeneID)
+  
+  # merge three tables to gene_info
+  gene_info<-gene_LG[gene_loc, on=c("GeneID")]
+  gene_info<-gene_info[gene_name]
+  gene_info<-gene_info[,!c("V1", "LinkageGroup")]
+  setkey(gene_info,LGn,Start,Stop)
+  
+  # seperate the full length from the exons
+  gene_info[,full:=FALSE]
+  gene_info[,c("gene_start","gene_end"):=list(min(Start),max(Stop)),by=GeneID]
+  gene_info[Start==gene_start&Stop==gene_end,full:=TRUE]
+  gene_info[,c("gene_start","gene_end"):=NULL]
+
+}
+
+
 #################################################################
 #  2.  Pairwise analysis
 #################################################################
 
 # read only relevant data
 # pop1 should be the one with first letter in front of pop2, e.g. "g" > "r", for the sake of mathing pairwise comparison in gos_vs_rob
-pop1<-"boot"
-pop2<-"gos"
+pop1<-"echo"
+pop2<-"rob"
 outgroup="say"
 
 
@@ -140,7 +175,7 @@ plotgene_bin <- function(dat, pop, focalLG, specifybps = F, minpos, maxpos, Gene
   lapply(statstoplot,cutoff_calculation)
   
   
-  for (chromosome in 2) {
+  for (chromosome in 12) {
     png(filename=sprintf("./result/chr_map_50k_slide/chr%s.%s_%s.divergence_0.99.png", chromosome,pop1,pop2),width = 3000, height = 2000,res=300)
     plotgene_bin(dat_plot,pop=c(pop1,pop2), focalLG=chromosome, statstoplot=statstoplot)
     dev.off()
@@ -155,6 +190,10 @@ fib_list<-c("boot","echo","fred","gos","law","pach","rob")
 pop_h_list<-c("boot","fred","law","rob")
 pop_l_list<-c("echo","gos","pach")
 
+#fib_list<-c("boot","echo","gos","law","rob")
+#pop_h_list<-c("law","rob")
+#pop_l_list<-c("boot","echo","gos")
+
 
 generate_pop_list<-function(list){
   all_comb<-t(combn(list,2))
@@ -167,6 +206,62 @@ all_list<-generate_pop_list(fib_list)
 hl_list<-all_list[!(all_list %in% hh_list | all_list %in% ll_list)]
 
 setcolorder(Fst,c(hh_list,hl_list,ll_list))
+
+# create sliding window frames
+windowsize <- 500
+stepsize<-250
+setkeyv(Fst,c("LGn","Pos"))
+chr <- Fst[, .(chr_snp=.N,chr_length = max(Pos)), by = LGn]
+chr[,Cumulative_Chrlengths:=cumsum(chr_length)]
+chr[,Cumulative_ChrSTART := c(0, Cumulative_Chrlengths[-length(Cumulative_Chrlengths)])]
+chr_slide<-chr[rep(1:.N,(chr_snp)%/%stepsize)][,.(window_start=(0:.N)*stepsize, window_end=((0:.N)*stepsize+windowsize),chr_snp=chr_snp,chr_length, cum_chr_start=Cumulative_ChrSTART), by = LGn]
+chr_slide<-chr_slide[window_end<chr_snp+stepsize]
+
+#dXY and Kirkpatrick's method
+dxy<-data.table(LGn=Fst[,LGn],Pos=Fst[,Pos])
+
+dxy_cal<-function(comparison, dat){
+  pops <- unlist(strsplit(comparison, split="_vs_"))
+  pop1_freq<-paste0(pops[1],"_freq")
+  pop2_freq<-paste0(pops[2],"_freq")
+  dxy <- dat[,get(pop1_freq)*(1-get(pop2_freq))+get(pop2_freq)*(1-get(pop1_freq))]
+  return(dxy)
+}
+
+for(i in pop_list){
+  dxy[,paste0(i,"_freq"):= Fst[,get(paste0(i,"_N_A"))/get(paste0(i,"_Nreads"))]]
+}
+for(i in all_list){
+  dxy[,paste0(i,"_dxy"):= dxy[,dxy_cal(i,dxy)]]
+}
+
+
+dxy[,Pos_join:= rowid(LGn)]
+Ra_slide_temp<-dxy[chr_slide, 
+                      on=c("LGn","Pos_join>window_start","Pos_join<window_end"), 
+                      allow.cartesian=T]
+Ra_slide_part1<-Ra_slide_temp[,.("PBS.nSNPs" = .N,
+                        "Pos_start" = min(Pos),
+                        "Pos_end" = max(Pos),
+                        "Pos" = (max(Pos)+min(Pos))/2, 
+                        "Pos_cum" = (max(Pos)+min(Pos))/2 + max(cum_chr_start)),
+                     by=.(LGn,Pos_join)]
+Ra_slide_part2<-Ra_slide_temp[,lapply(.SD,mean),.SDcol=paste0(all_list,"_dxy"), by=.(LGn,Pos_join)]
+Ra_slide<-Ra_slide_part1[Ra_slide_part2,on=c("LGn","Pos_join")]
+rm(Ra_slide_temp,Ra_slide_part1,Ra_slide_part2)
+
+sum_dist<-function(y) sum(unlist(lapply(y,function(x) -log(1-x))),na.rm=T)
+
+
+pbs_cal<-function(data,dist_fun,hl=hl_list,hh=hh_list,ll=ll_list){
+  snp_num<-nrow(data)
+  data[,D_hl:=sum_dist(.SD),.SD=hl_list,by=seq_len(snp_num)]
+  data[,D_hh:=sum_dist(.SD),.SD=hh_list,by=seq_len(snp_num)]
+  data[,D_ll:=sum_dist(.SD),.SD=ll_list,by=seq_len(snp_num)]
+  data[,pbs:=(D_hl-(D_hh*3/5+D_ll*6/2))/12,by=seq_len(snp_num)]
+}
+
+
 
 # Tau_Foen: calculate the branch lenth between h and L pops: (D_hl - D_hh*N_ll/(N_hh-1) -D_ll*N_hh/(N_ll-1))/N_hl
 sum_dist<-function(y) sum(unlist(lapply(y,function(x) -log(1-x))),na.rm=T)
@@ -189,25 +284,17 @@ phy_correction<-function(comparison, value, matrix){
   return(correct)
 }
 
+
 Fst_phy_correct<-data.table(LGn=Fst[,LGn],Pos=Fst[,Pos])
 for(i in all_list){
   Fst_phy_correct[,(i):=phy_correction(i,Fst[,get(i)],Fst_genome)]
 }
-
 pbs_cal(data=Fst_phy_correct,dist_fun = sum_dist)
 
+
+
 ###### creating sliding window by SNP numbers
-
-windowsize <- 500
-stepsize<-250
-setkeyv(Fst,c("LGn","Pos"))
-chr <- Fst[, .(chr_snp=.N,chr_length = max(Pos)), by = LGn]
-chr[,Cumulative_Chrlengths:=cumsum(chr_length)]
-chr[,Cumulative_ChrSTART := c(0, Cumulative_Chrlengths[-length(Cumulative_Chrlengths)])]
-chr_slide<-chr[rep(1:.N,(chr_snp)%/%stepsize)][,.(window_start=(0:.N)*stepsize, window_end=((0:.N)*stepsize+windowsize),chr_snp=chr_snp,chr_length, cum_chr_start=Cumulative_ChrSTART), by = LGn]
-chr_slide<-chr_slide[window_end<chr_snp+stepsize]
-
-slide_data<-Fst_phy_correct
+slide_data<-Fst
 slide_data[,Pos_join:= rowid(LGn)]
 Tau_slide<-slide_data[chr_slide, 
                on=c("LGn","Pos_join>window_start","Pos_join<window_end"), 
@@ -216,9 +303,58 @@ Tau_slide<-slide_data[chr_slide,
                                      "Pos_end" = max(Pos),
                                      "Pos" = (max(Pos)+min(Pos))/2, 
                                      "Pos_cum" = (max(Pos)+min(Pos))/2 + max(cum_chr_start),
-                                     "PBSm_phy_correct" = mean(pbs,na.rm=T)),
+                                     "PBSm" = mean(pbs,na.rm=T)),
                                   by=.(LGn,Pos_join)]
 
+# function to plot region view of every SNP
+{
+  plot_region <- function(dat, focalLG, minpos, maxpos, gene.name, gene.id, exon, statstoplot){
+    npops <- length(statstoplot)
+    par(mfrow = c(npops,1),mar = c(1.5,4,0.5,0.5), mgp = c(2, 0.75, 0), oma = c(3,0,2,0))
+    
+    options(scipen=5)
+    col<-c("darkblue","darkred","darkgreen","darkorange","darkmagenta")
+    for(i in 1:length(statstoplot)){
+      if(statstoplot[i] %in% c("dp.GR","GRFst.nonneg")){
+        y_lim=c(0,1)
+      }else{
+        y_lim=c(0,5)
+      }
+      plot(dat[,.(Pos,eval(parse(text = statstoplot[i])))], pch = 16, cex = 0.5, axes = F, ylim=y_lim, ylab = statstoplot[i],col=col[i])
+      rect(exon[,Start], 0,  exon[,Stop],y_lim[2], border = rgb(1,0,0,0) , lwd = 1, col = rgb(1,0,0,0.1))
+      text(exon[,(Start+Stop)/2],y_lim[2],labels = paste(substr(gene.id,14,nchar(gene.id)),gene.name,sep=" "),cex=0.7, pos=1,srt=90)
+      axis(1, at=seq(minpos,maxpos,0.025E6), labels = F)
+      axis(1, at=seq(minpos,maxpos,0.05E6), labels = seq(minpos/1e6,maxpos/1e6,0.05))
+      axis(2)
+    }
+    mtext(paste("LG",focalLG,":", minpos,"-",maxpos),side=1,line=1, outer = TRUE)
+  }
+  
+  region_to_plot<-data.table(
+    LGn = 12,
+    start = 12500000,
+    end = 13000000
+  )
+  statstoplot = c("pbs","gos_vs_rob","fred_vs_pach")
+  dat_plot = Fst
+  
+  for (i in 1:region_to_plot[,.N]) {
+    LGn_plot<-region_to_plot[i,LGn]
+    region_start_plot<-region_to_plot[i,start]
+    region_end_plot<-region_to_plot[i,end]
+    
+    png(filename=sprintf("./result/Region_zoomin/LG%s_%s-%s__WormMass_without_pach_fred.png",LGn_plot,region_start_plot/1e6,region_end_plot/1e6),width = 3000, height = 2000,res=300)
+    
+    gene_info_plot<-gene_info[Start>region_start_plot & Stop<region_end_plot & LGn==LGn_plot,]
+    gene_name_plot<-gene_info_plot[full==TRUE,gene.name]
+    gene_id_plot<-gene_info_plot[full==TRUE,GeneID]
+    exon_plot<-gene_info_plot[full==TRUE,.(Start, Stop)]
+    SNP_plot<-dat_plot[LGn==LGn_plot & Pos >= region_start_plot & Pos <= region_end_plot,.SD,keyby=Pos]
+    plot_region(SNP_plot,focalLG=LGn_plot, minpos=region_start_plot, maxpos=region_end_plot, gene.name=gene_name_plot,gene.id=gene_id_plot, exon=exon_plot,
+                statstoplot = statstoplot)
+    dev.off()
+  } 
+}
 
 # function to plot per chromosome map
 {
@@ -257,7 +393,7 @@ Tau_slide<-slide_data[chr_slide,
     Chr.mid <- dat[,(min(Pos_cum)+max(Pos_cum))/2,by=LGn][,V1]
     axis(2)
     axis(1, at= c(dat[,min(Pos_cum),by=LGn][,V1],dat[,max(Pos_cum)]), labels = c(1:21,"Un",NA))
-    rect(dat[,min(Pos_cum),by=LGn][,V1],y_lim[1],dat[,max(Pos_cum),by=LGn][,V1],y_lim[2],border = rgb(0,0,0,0.5), lwd = 2, col= rep(c(NA,rgb(0,0,0,alpha=0.1)),12) )
+    rect(dat[,min(Pos_cum),by=LGn][,V1],y_lim[1],dat[,max(Pos_cum),by=LGn][,V1],y_lim[2],border = NA, lwd = 0.1, col= rep(c(NA,rgb(0,0,0,alpha=0.1)),12) )
 
   }
 }
@@ -269,7 +405,7 @@ Tau_slide<-slide_data[chr_slide,
 
 {
   dat_plot <- Tau_slide
-  statstoplot = c("PBSm_phy_correct")
+  statstoplot = c("PBSm")
   
   cutoff_calculation<-function(var, data=dat_plot, threshold=0.99){
     var.cutoff <- quantile(data[,get(var)],threshold,na.rm=T)
@@ -278,12 +414,12 @@ Tau_slide<-slide_data[chr_slide,
   
   lapply(statstoplot,cutoff_calculation)
   
-  png(sprintf("./result/%s_genome.png",statstoplot), width = 5000, height = 2000,res=350)  
+  png(sprintf("./result/%s_genome_without_pach_fred_500SNP.png",statstoplot), width = 5000, height = 2000,res=350)  
   plot_bin_genome(dat=dat_plot,statstoplot)
   dev.off()
   
   for (chromosome in 1:21) {
-    png(filename=sprintf("./result/chr_500SNP_slide_PBSm_phy_correct/chr%s.divergence_0.99.png", chromosome),width = 4000, height = 2000,res=300)
+    png(filename=sprintf("./result/chr_500SNP_WormMass_PBSm_without_pach_fred/chr%s.divergence_0.99.png", chromosome),width = 4000, height = 2000,res=300)
     plot_bin_LG(dat_plot,pop=c("",""), focalLG=chromosome, statstoplot=statstoplot)
     dev.off()
   } 

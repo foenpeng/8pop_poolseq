@@ -80,7 +80,7 @@ pop_list<-c("boot","echo","fred","gos","law","pach","rob","say")
 
 # read only relevant data
 # pop1 should be the one with first letter in front of pop2, e.g. "g" > "r", for the sake of mathing pairwise comparison in gos_vs_rob
-pop1<-"echo"
+pop1<-"gos"
 pop2<-"rob"
 outgroup="say"
 
@@ -113,8 +113,8 @@ setnames(pop1_pop2_Fst,-(1:4),c("pop1_N_A","pop2_N_A","outgroup_N_A",
 #  2. sliding window
 
 {
-  windowsize <- 50000
-  stepsize<-10000
+  windowsize <- 5000
+  stepsize<-1000
   
   chr <- pop1_pop2_Fst[, .(chr_length = max(Pos)), by = LGn]
   #chr[,cumulative_chrlengths := cumsum(chr_length)]
@@ -176,11 +176,14 @@ plotgene_bin <- function(dat, pop, focalLG, specifybps = F, minpos, maxpos, Gene
   
   
   for (chromosome in 12) {
-    png(filename=sprintf("./result/chr_map_50k_slide/chr%s.%s_%s.divergence_0.99.png", chromosome,pop1,pop2),width = 3000, height = 2000,res=300)
+    #png(filename=sprintf("./result/chr_map_50k_slide/chr%s.%s_%s.divergence_0.99.png", chromosome,pop1,pop2),width = 3000, height = 2000,res=300)
     plotgene_bin(dat_plot,pop=c(pop1,pop2), focalLG=chromosome, statstoplot=statstoplot)
-    dev.off()
+    #dev.off()
   } 
 }
+
+
+
 
 #################################################################
 #  3.  All comparison analysis
@@ -275,7 +278,13 @@ pbs_cal<-function(data,dist_fun,hl=hl_list,hh=hh_list,ll=ll_list){
   data[,pbs:=(D_hl-(D_hh*3/5+D_ll*6/2))/12,by=seq_len(snp_num)]
 }
 
-pbs_cal(data=Fst,dist_fun = sum_dist)
+
+# read popgen files, which is very large
+if(file.exists("./result/Tau_Foen_RobLaw_BootEchoGos.csv")){
+  Tau_foen_data<-fread("./result/Tau_Foen_RobLaw_BootEchoGos.csv",header = T)
+  Fst<-Fst[Tau_foen_data,on=c("LGn","Pos")]
+}else{
+pbs_cal(data=Fst,dist_fun = sum_dist)}
 
 # calculate average Distance
 Fst[,D_hl:=D_hl/length(hl_list)]
@@ -347,7 +356,7 @@ Tau_slide<-slide_data[chr_slide,
     region_start_plot<-region_to_plot[i,start]
     region_end_plot<-region_to_plot[i,end]
     
-    png(filename=sprintf("./result/Region_zoomin/LG%s_%s-%s_RobLaw_BootEchoGos.png",LGn_plot,region_start_plot/1e6,region_end_plot/1e6),width = 3500, height = 2000,res=300)
+    #png(filename=sprintf("./result/Region_zoomin/LG%s_%s-%s_RobLaw_BootEchoGos.png",LGn_plot,region_start_plot/1e6,region_end_plot/1e6),width = 3500, height = 2000,res=300)
     
     gene_info_plot<-gene_info[Start>region_start_plot & Stop<region_end_plot & LGn==LGn_plot,]
     gene_name_plot<-gene_info_plot[full==TRUE,gene.name]
@@ -356,7 +365,7 @@ Tau_slide<-slide_data[chr_slide,
     SNP_plot<-dat_plot[LGn==LGn_plot & Pos >= region_start_plot & Pos <= region_end_plot,.SD,keyby=Pos]
     plot_region(SNP_plot,focalLG=LGn_plot, minpos=region_start_plot, maxpos=region_end_plot, gene.name=gene_name_plot,gene.id=gene_id_plot, exon=exon_plot,
                 statstoplot = statstoplot, y_range=y_range)
-    dev.off()
+    #dev.off()
   } 
 }
 
@@ -429,3 +438,105 @@ Tau_slide<-slide_data[chr_slide,
   } 
 }
 
+
+
+
+
+
+
+##################################################################################################################################
+# plot for evolution poster
+
+{
+  plot_bin_LG <- function(dat, pop, focalLG, specifybps = F, minpos, maxpos, Genestart, Geneend, Genename, statstoplot){
+    npops <- length(statstoplot)
+    par(mfrow = c(npops,1),mar = c(1.5,4,0.5,0.5), mgp = c(2, 0.75, 0), oma = c(3,0,2,0))
+    if(specifybps == F){
+      minpos <- 0
+      maxpos <- dat[LGn==focalLG,max(Pos)]
+    }
+    options(scipen=5)
+    col<-c("darkblue","darkred","darkgreen","darkorange","darkmagenta")
+    for(i in 1:length(statstoplot)){
+      y_lim=c(-0.7,0.7)
+      plot(dat[LGn %in% c(focalLG) & Pos > minpos & Pos < maxpos,.(Pos/1000000,eval(parse(text = statstoplot[i])))],pch = 20,cex = 0.5,axes = F,ylim=y_lim, xlab = paste("Chromosome",focalLG), ylab = "Populatin Distance",col="black", cex.lab=1.5)
+      abline(v=dat[LGn %in% c(focalLG) & Pos > minpos & Pos < maxpos & eval(parse(text = paste(statstoplot[i],".focal",sep=""))),Pos/1000000],col=rgb(red=0,green=0,blue=0,alpha=100,maxColorValue = 255))
+      ticks<-seq(0,max(dat[LGn %in% c(focalLG),Pos])/1e6,1)
+      axis(1, at=seq(0,maxpos/1e6,0.5), labels = F)
+      axis(1, at=seq(0,maxpos/1e6,1), labels = seq(0,maxpos/1e6,1),cex.axis=1.5)
+      axis(2,cex.axis=1.2)
+    }
+    mtext(paste("Chromosome",focalLG),side=1,line=1, outer = TRUE, cex=1.5)
+  }
+
+
+
+{
+  dat_plot <- Tau_slide
+  statstoplot = c("pbs_slide")
+  
+  cutoff_calculation<-function(var, data=dat_plot, threshold=0.99){
+    var.cutoff <- quantile(data[,get(var)],threshold,na.rm=T)
+    data[,paste0(var,".focal"):= ifelse(get(var)> var.cutoff, T, F)]
+  }
+  
+  lapply(statstoplot,cutoff_calculation)
+  
+  
+  for (chromosome in 12) {
+    pdf(file="./result/Evol2019_poster_pbs_LG12.pdf", width = 15, height = 4)
+
+    plot_bin_LG(dat_plot,pop=c("",""), focalLG=chromosome, statstoplot=statstoplot)
+    dev.off()
+  } 
+}
+}
+
+
+
+
+{
+  plot_region <- function(dat, focalLG, minpos, maxpos, gene.name, gene.id, exon, statstoplot, y_range){
+    npops <- length(statstoplot)
+    par(mfrow = c(npops,1),mar = c(1.5,4,0.5,0.5), mgp = c(2, 0.75, 0), oma = c(3,0,2,0))
+    
+    options(scipen=5)
+    col<-c("black","black","darkgreen","darkorange","darkmagenta")
+    y_lab<-c("Fst (Rob-Gos)")
+    for(i in 1:length(statstoplot)){
+      y_lim = unlist(y_range[,get(statstoplot[i])])
+      plot(dat[,.(Pos,eval(parse(text = statstoplot[i])))], pch = 20, cex = 0.5,cex.lab = 1.5, axes = F, ylim=y_lim, ylab = y_lab[i],col=col[i])
+      rect(exon[,Start], y_lim[1],  exon[,Stop],y_lim[2], border = NA , lwd = 1, col = rgb(0,0,0,0.1))
+      #text(exon[,(Start+Stop)/2],y_lim[2]/1.2,labels = paste(substr(gene.id,14,nchar(gene.id)),gene.name,sep=" "),cex=0.7, pos=1,srt=90)
+      axis(1, at=seq(minpos,maxpos,0.025E6), labels = F)
+      axis(1, at=seq(minpos,maxpos,0.05E6), labels = seq(minpos/1e6,maxpos/1e6,0.05), cex.axis=1.5)
+      axis(2, cex.axis=1.2)
+    }
+    mtext(paste("LG",focalLG,":", minpos,"-",maxpos),side=1,line=1, outer = TRUE,cex=1.5)
+  }
+  
+  region_to_plot<-data.table(
+    LGn = 12,
+    start = 12.7e6,
+    end = 13e6
+  )
+  statstoplot = c("gos_vs_rob")
+  dat_plot = Fst
+  y_range = dat_plot[,..statstoplot][,lapply(.SD,function(x) list(min(x),max(x)))]
+  for (i in 1:region_to_plot[,.N]) {
+    LGn_plot<-region_to_plot[i,LGn]
+    region_start_plot<-region_to_plot[i,start]
+    region_end_plot<-region_to_plot[i,end]
+    
+    #png(filename=sprintf("./result/Region_zoomin/LG%s_%s-%s_RobLaw_BootEchoGos.png",LGn_plot,region_start_plot/1e6,region_end_plot/1e6),width = 3500, height = 2000,res=300)
+    pdf(file="./result/Evol2019_poster_pbs_zoominLG12.75_FstOnly.pdf", width = 15, height = 4)
+    gene_info_plot<-gene_info[Start>region_start_plot & Stop<region_end_plot & LGn==LGn_plot,]
+    gene_name_plot<-gene_info_plot[full==TRUE,gene.name]
+    gene_id_plot<-gene_info_plot[full==TRUE,GeneID]
+    exon_plot<-gene_info_plot[full==TRUE,.(Start, Stop)]
+    SNP_plot<-dat_plot[LGn==LGn_plot & Pos >= region_start_plot & Pos <= region_end_plot,.SD,keyby=Pos]
+    plot_region(SNP_plot,focalLG=LGn_plot, minpos=region_start_plot, maxpos=region_end_plot, gene.name=gene_name_plot,gene.id=gene_id_plot, exon=exon_plot,
+                statstoplot = statstoplot, y_range=y_range)
+    dev.off()
+  } 
+}

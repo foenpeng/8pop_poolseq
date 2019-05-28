@@ -586,3 +586,76 @@ Tau_slide<-slide_data[chr_slide,
     dev.off()
   } 
 }
+
+
+{
+gos_cov<- fread("./processed_data/Read_coverage/Coverage_Gos.csv", header = T)
+rob_cov<- fread("./processed_data/Read_coverage/Coverage_Rob.csv", header = T)
+gos_cov_12.75<-gos_cov[Position>=12.75e6 & Position <=12.9e6]
+rob_cov_12.75<-rob_cov[Position>=12.75e6 & Position <=12.9e6]
+cov_12.75<-gos_cov_12.75[rob_cov_12.75,on=("Position")][,.("Pos"=Position,
+                                                           "rob_cov"=i.Coverage,
+                                                           "gos_cov"=Coverage)]
+                         
+rm(gos_cov,rob_cov)
+
+slide_data<-cov_12.75
+slide_data[,LGn:=12]
+slide_data[,Pos_join:= rowid(LGn)]
+cov_slide<-slide_data[chr_slide, 
+                      on=c("LGn","Pos_join>window_start","Pos_join<window_end"), 
+                      allow.cartesian=T][,.("Pos" = (max(Pos)+min(Pos))/2, 
+                                            "Pos_cum" = (max(Pos)+min(Pos))/2 + max(cum_chr_start),
+                                            "Rob_Coverage" = mean(rob_cov,na.rm=T),
+                                            "Gos_Coverage" = mean(gos_cov,na.rm=T)),
+                                         by=.(LGn,Pos_join)]
+region_to_plot<-data.table(
+  LGn = 12,
+  start = 12.75e6,
+  end = 12.9e6
+)
+dat_plot=cov_slide
+statstoplot = c("Rob_Coverage","Gos_Coverage")
+
+
+plot_cov <- function(dat, focalLG, minpos, maxpos, gene.name, gene.id, exon, statstoplot, y_lab){
+  
+  options(scipen=5)
+  col<-c("darkgreen","darkmagenta")
+  
+  for(i in 1:length(statstoplot)){
+    
+    plot(dat[,.(Pos,eval(parse(text = statstoplot[i])))], pch = 20, type="o", cex = 0.5,cex.lab = 1.5, axes = F, ylim=c(0,300), ylab = y_lab,col=col[i],xlab="")
+    par(new=TRUE)
+  }
+  rect(exon[,Start], 0,  exon[,Stop],300, border = NA , lwd = 1, col = rgb(0,0,0,0.1))
+  #text(exon[,(Start+Stop)/2],y_lim[2]/1.2,labels = paste(substr(gene.id,14,nchar(gene.id)),gene.name,sep=" "),cex=0.7, pos=1,srt=90)
+  axis(1, at=seq(minpos,maxpos,0.025E6), labels = F)
+  axis(1, at=seq(minpos,maxpos,0.05E6), labels = seq(minpos/1e6,maxpos/1e6,0.05), cex.axis=1.5)
+  axis(2, cex.axis=1.2)
+  
+  legend('bottomright', statstoplot, 
+         lty=1, col=c("darkgreen","darkmagenta"), bty='n', cex=1.2)
+  #text(paste("LG",focalLG," (Mb)"),pos=1,cex=1.5)
+}
+
+
+for (i in 1:region_to_plot[,.N]) {
+  LGn_plot<-region_to_plot[i,LGn]
+  region_start_plot<-region_to_plot[i,start]
+  region_end_plot<-region_to_plot[i,end]
+  
+  #png(filename=sprintf("./result/Region_zoomin/LG%s_%s-%s_RobLaw_BootEchoGos.png",LGn_plot,region_start_plot/1e6,region_end_plot/1e6),width = 3500, height = 2000,res=300)
+  pdf(file="./result/Evol2019_poster_pbs_zoominLG12.75_cov.pdf", width = 15, height = 4)
+  gene_info_plot<-gene_info[Start>region_start_plot & Stop<region_end_plot & LGn==LGn_plot,]
+  gene_name_plot<-gene_info_plot[full==TRUE,gene.name]
+  gene_id_plot<-gene_info_plot[full==TRUE,GeneID]
+  exon_plot<-gene_info_plot[full==TRUE,.(Start, Stop)]
+  SNP_plot<-dat_plot[LGn==LGn_plot & Pos >= region_start_plot & Pos <= region_end_plot,.SD,keyby=Pos]
+  plot_cov(SNP_plot,focalLG=LGn_plot, minpos=region_start_plot, maxpos=region_end_plot, gene.name=gene_name_plot,gene.id=gene_id_plot, exon=exon_plot,
+              statstoplot = statstoplot,  y_lab="Coverage")
+  dev.off()
+} 
+
+
+}

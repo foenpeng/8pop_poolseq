@@ -113,8 +113,8 @@ setnames(pop1_pop2_Fst,-(1:4),c("pop1_N_A","pop2_N_A","outgroup_N_A",
 #  2. sliding window
 
 {
-  windowsize <- 5000
-  stepsize<-1000
+  windowsize <- 10000
+  stepsize<-5000
   
   chr <- pop1_pop2_Fst[, .(chr_length = max(Pos)), by = LGn]
   #chr[,cumulative_chrlengths := cumsum(chr_length)]
@@ -141,7 +141,7 @@ setnames(pop1_pop2_Fst,-(1:4),c("pop1_N_A","pop2_N_A","outgroup_N_A",
 
 ##### Plot binned genomic map, modified from Dan's plot function from file Graphics function.R
 
-plotgene_bin <- function(dat, pop, focalLG, specifybps = F, minpos, maxpos, Genestart, Geneend, Genename, statstoplot){
+plotgene_bin <- function(dat, pop, focalLG, specifybps = F, minpos, maxpos, Genestart, Geneend, Genename, statstoplot, y_range){
     npops <- length(statstoplot)
     par(mfrow = c(npops,1),mar = c(1.5,4,0.5,0.5), mgp = c(2, 0.75, 0), oma = c(3,0,2,0))
     if(specifybps == F){
@@ -151,9 +151,9 @@ plotgene_bin <- function(dat, pop, focalLG, specifybps = F, minpos, maxpos, Gene
     options(scipen=5)
     col<-c("darkblue","darkred","darkgreen","darkorange","darkmagenta")
     for(i in 1:length(statstoplot)){
-      
-      plot(dat[LGn %in% c(focalLG) & Pos > minpos & Pos < maxpos,.(Pos/1000000,eval(parse(text = statstoplot[i])))],pch = 16, cex = 0.6, axes = F, xlab = paste("Chromosome",focalLG), ylab = statstoplot[i],col=col[i])
-      abline(v=dat[LGn %in% c(focalLG) & Pos > minpos & Pos < maxpos & eval(parse(text = paste(statstoplot[i],".focal",sep=""))),Pos/1000000],col=rgb(red=0,green=0,blue=0,alpha=100,maxColorValue = 255))
+      y_lim = unlist(y_range[,get(statstoplot[i])])
+      plot(dat[LGn %in% c(focalLG) & Pos > minpos & Pos < maxpos,.(Pos/1000000,eval(parse(text = statstoplot[i])))],pch = 16, cex = 0.6, axes = F, xlab = paste("Chromosome",focalLG), ylab = statstoplot[i],col=col[i], ylim=y_lim)
+      abline(v=dat[LGn %in% c(focalLG) & Pos > minpos & Pos < maxpos & eval(parse(text = paste(statstoplot[i],".focal",sep=""))),Pos/1000000],col=rgb(red=0,green=0,blue=0,alpha=50,maxColorValue = 255))
       ticks<-seq(0,max(dat[LGn %in% c(focalLG),Pos])/1e6,1)
       axis(1, at=seq(0,maxpos/1e6,0.5), labels = F)
       axis(1, at=seq(0,maxpos/1e6,1), labels = seq(0,maxpos/1e6,1))
@@ -173,12 +173,12 @@ plotgene_bin <- function(dat, pop, focalLG, specifybps = F, minpos, maxpos, Gene
   }
   
   lapply(statstoplot,cutoff_calculation)
+  y_range = dat_plot[,..statstoplot][,lapply(.SD,function(x) list(min(x,na.rm = T),max(x,na.rm = T)))]
   
-  
-  for (chromosome in 12) {
-    #png(filename=sprintf("./result/chr_map_50k_slide/chr%s.%s_%s.divergence_0.99.png", chromosome,pop1,pop2),width = 3000, height = 2000,res=300)
-    plotgene_bin(dat_plot,pop=c(pop1,pop2), focalLG=chromosome, statstoplot=statstoplot)
-    #dev.off()
+  for (chromosome in 1:21) {
+    png(filename=sprintf("./result/chr_map_10k_slide/chr%s.%s_%s.divergence_0.99.png", chromosome,pop1,pop2),width = 3000, height = 2000,res=300)
+    plotgene_bin(dat_plot,pop=c(pop1,pop2), focalLG=chromosome, statstoplot=statstoplot,y_range=y_range)
+    dev.off()
   } 
 }
 
@@ -496,13 +496,13 @@ Tau_slide<-slide_data[chr_slide,
 
 
 {
-  plot_region <- function(dat, focalLG, minpos, maxpos, gene.name, gene.id, exon, statstoplot, y_range){
+  plot_region <- function(dat, focalLG, minpos, maxpos, gene.name, gene.id, exon, statstoplot, y_range, y_lab){
     npops <- length(statstoplot)
     par(mfrow = c(npops,1),mar = c(1.5,4,0.5,0.5), mgp = c(2, 0.75, 0), oma = c(3,0,2,0))
     
     options(scipen=5)
     col<-c("black","black","darkgreen","darkorange","darkmagenta")
-    y_lab<-c("Fst (Rob-Gos)")
+
     for(i in 1:length(statstoplot)){
       y_lim = unlist(y_range[,get(statstoplot[i])])
       plot(dat[,.(Pos,eval(parse(text = statstoplot[i])))], pch = 20, cex = 0.5,cex.lab = 1.5, axes = F, ylim=y_lim, ylab = y_lab[i],col=col[i])
@@ -517,8 +517,8 @@ Tau_slide<-slide_data[chr_slide,
   
   region_to_plot<-data.table(
     LGn = 12,
-    start = 12.7e6,
-    end = 13e6
+    start = 12.75e6,
+    end = 12.9e6
   )
   statstoplot = c("gos_vs_rob")
   dat_plot = Fst
@@ -536,7 +536,53 @@ Tau_slide<-slide_data[chr_slide,
     exon_plot<-gene_info_plot[full==TRUE,.(Start, Stop)]
     SNP_plot<-dat_plot[LGn==LGn_plot & Pos >= region_start_plot & Pos <= region_end_plot,.SD,keyby=Pos]
     plot_region(SNP_plot,focalLG=LGn_plot, minpos=region_start_plot, maxpos=region_end_plot, gene.name=gene_name_plot,gene.id=gene_id_plot, exon=exon_plot,
-                statstoplot = statstoplot, y_range=y_range)
+                statstoplot = statstoplot, y_range=y_range, y_lab<-c("Fst (Rob-Gos)"))
+    dev.off()
+  } 
+}
+
+# plot coverage
+{
+  gos_cov<- fread("./processed_data/Read_coverage/Coverage_Gos.csv", header = T)
+  rob_cov<- fread("./processed_data/Read_coverage/Coverage_Rob.csv", header = T)
+  gos_cov_12.75<-gos_cov[Position>=12.75e6 & Position <=12.9e6]
+  rob_cov_12.75<-rob_cov[Position>=12.75e6 & Position <=12.9e6]
+  rm(gos_cov,rob_cov)
+  
+  
+  slide_data<-rob_cov_12.75
+  slide_data[,LGn:=12]
+  slide_data[,Pos_join:= rowid(LGn)]
+  cov_slide<-slide_data[chr_slide, 
+                        on=c("LGn","Pos_join>window_start","Pos_join<window_end"), 
+                        allow.cartesian=T][,.("Pos" = (max(Position)+min(Position))/2, 
+                                              "Pos_cum" = (max(Position)+min(Position))/2 + max(cum_chr_start),
+                                              "Coverage" = mean(Coverage,na.rm=T)),
+                                           by=.(LGn,Pos_join)]
+
+
+  region_to_plot<-data.table(
+    LGn = 12,
+    start = 12.75e6,
+    end = 12.9e6
+  )
+  dat_plot=cov_slide
+  statstoplot = c("Coverage")
+  y_range = data.table(Coverage=c(0,300))
+  for (i in 1:region_to_plot[,.N]) {
+    LGn_plot<-region_to_plot[i,LGn]
+    region_start_plot<-region_to_plot[i,start]
+    region_end_plot<-region_to_plot[i,end]
+    
+    #png(filename=sprintf("./result/Region_zoomin/LG%s_%s-%s_RobLaw_BootEchoGos.png",LGn_plot,region_start_plot/1e6,region_end_plot/1e6),width = 3500, height = 2000,res=300)
+    pdf(file="./result/Evol2019_poster_pbs_zoominLG12.75_rob_cov.pdf", width = 15, height = 4)
+    gene_info_plot<-gene_info[Start>region_start_plot & Stop<region_end_plot & LGn==LGn_plot,]
+    gene_name_plot<-gene_info_plot[full==TRUE,gene.name]
+    gene_id_plot<-gene_info_plot[full==TRUE,GeneID]
+    exon_plot<-gene_info_plot[full==TRUE,.(Start, Stop)]
+    SNP_plot<-dat_plot[LGn==LGn_plot & Pos >= region_start_plot & Pos <= region_end_plot,.SD,keyby=Pos]
+    plot_region(SNP_plot,focalLG=LGn_plot, minpos=region_start_plot, maxpos=region_end_plot, gene.name=gene_name_plot,gene.id=gene_id_plot, exon=exon_plot,
+                statstoplot = statstoplot, y_range=y_range, y_lab="Coverage")
     dev.off()
   } 
 }

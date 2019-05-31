@@ -25,10 +25,11 @@ setwd("D:/Foen Peng/OneDrive - University of Connecticut/Poolseq_8pops")
 Fst<- fread("./processed_data/Fst_8pops_WithIndel.csv", header = T)
 Fst_sample<- fread("./processed_data/Fst_8pops_WithIndel.csv", header = T, nrows=10)
 # read population Fst as data frame, becasue data table does not support row names
-Fst_genome<-read.csv("./processed_data/Pop_Fst_8pops_WithIndel.csv", header = T)
+Fst_genome_dt<-read.csv("./processed_data/Pop_Fst_8pops_WithIndel.csv", header = T)
 #row.names(Fst_genome)<-colnames(Fst_genome)
-Fst_genome<-as.matrix(Fst_genome)
 
+Fst_genome<-as.matrix(Fst_genome_dt[,-1], labels=TRUE)
+rownames(Fst_genome) <- unlist(Fst_genome_dt[1])
 # change LG name, 1000 means mitochondial DNA, NA means unmapped
 Fst[substr(LG, 1, 2) == "ch", LGn := as.numeric(as.roman(substr(LG, 4, nchar(LG))))]
 Fst[is.na(LGn),LGn:=100]
@@ -193,9 +194,9 @@ plotgene_bin <- function(dat, pop, focalLG, specifybps = F, minpos, maxpos, Gene
 #pop_h_list<-c("boot","fred","law","rob")
 #pop_l_list<-c("echo","gos","pach")
 
-fib_list<-c("boot","echo","gos","law","rob")
+fib_list<-c("boot","echo","gos","law","rob","say")
 pop_h_list<-c("law","rob")
-pop_l_list<-c("boot","echo","gos")
+pop_l_list<-c("boot","echo","gos","say")
 
 
 generate_pop_list<-function(list){
@@ -292,7 +293,7 @@ Fst[,D_hh:=D_hh/length(hh_list)]
 Fst[,D_ll:=D_ll/length(ll_list)]
 
 
-#fwrite(Fst[,.(LGn,Pos,pbs)],"./result/Tau_Foen_RobLaw_BootEchoGos.csv")
+#fwrite(Fst[,.(LGn,Pos,pbs)],"./result/Tau_Foen_RobLaw_BootEchoGosSay.csv")
 
 # Tau_Foen: correct for phylogeny
 phy_correction<-function(comparison, value, matrix){
@@ -311,7 +312,7 @@ pbs_cal(data=Fst_phy_correct,dist_fun = sum_dist)
 
 
 ###### creating sliding window by SNP numbers
-slide_data<-Fst
+slide_data<-Fst_phy_correct
 slide_data[,Pos_join:= rowid(LGn)]
 Tau_slide<-slide_data[chr_slide, 
                on=c("LGn","Pos_join>window_start","Pos_join<window_end"), 
@@ -320,7 +321,7 @@ Tau_slide<-slide_data[chr_slide,
                                      "Pos_end" = max(Pos),
                                      "Pos" = (max(Pos)+min(Pos))/2, 
                                      "Pos_cum" = (max(Pos)+min(Pos))/2 + max(cum_chr_start),
-                                     "pbs_slide" = mean(pbs,na.rm=T)),
+                                     "pbs_slide_phy" = mean(pbs,na.rm=T)),
                                   by=.(LGn,Pos_join)]
 
 # function to plot region view of every SNP
@@ -344,11 +345,12 @@ Tau_slide<-slide_data[chr_slide,
   }
   
   region_to_plot<-data.table(
-    LGn = 7,
-    start = 13.1e6,
-    end = 13.7e6
+    LGn = 12,
+    start = 12.75e6,
+    end = 13.3e6
   )
   statstoplot = c("pbs","gos_vs_rob","D_hl","D_ll","D_hh")
+  #statstoplot = c("pbs.1","pbs.2","pbs.o","pop1_pop2_Fst","pop1_outgroup_Fst")
   dat_plot = Fst
   y_range = dat_plot[,..statstoplot][,lapply(.SD,function(x) list(min(x),max(x)))]
   for (i in 1:region_to_plot[,.N]) {
@@ -356,8 +358,7 @@ Tau_slide<-slide_data[chr_slide,
     region_start_plot<-region_to_plot[i,start]
     region_end_plot<-region_to_plot[i,end]
     
-    #png(filename=sprintf("./result/Region_zoomin/LG%s_%s-%s_RobLaw_BootEchoGos.png",LGn_plot,region_start_plot/1e6,region_end_plot/1e6),width = 3500, height = 2000,res=300)
-    
+    #png(filename=sprintf("./result/Region_zoomin/LG%s_%s-%s_RobLaw_BootEchoGosSay_phy.png",LGn_plot,region_start_plot/1e6,region_end_plot/1e6),width = 3500, height = 2000,res=300)
     gene_info_plot<-gene_info[Start>region_start_plot & Stop<region_end_plot & LGn==LGn_plot,]
     gene_name_plot<-gene_info_plot[full==TRUE,gene.name]
     gene_id_plot<-gene_info_plot[full==TRUE,GeneID]
@@ -365,7 +366,7 @@ Tau_slide<-slide_data[chr_slide,
     SNP_plot<-dat_plot[LGn==LGn_plot & Pos >= region_start_plot & Pos <= region_end_plot,.SD,keyby=Pos]
     plot_region(SNP_plot,focalLG=LGn_plot, minpos=region_start_plot, maxpos=region_end_plot, gene.name=gene_name_plot,gene.id=gene_id_plot, exon=exon_plot,
                 statstoplot = statstoplot, y_range=y_range)
-    #dev.off()
+    dev.off()
   } 
 }
 
@@ -418,7 +419,7 @@ Tau_slide<-slide_data[chr_slide,
 
 {
   dat_plot <- Tau_slide
-  statstoplot = c("pbs_slide")
+  statstoplot = c("pbs_slide_phy")
   
   cutoff_calculation<-function(var, data=dat_plot, threshold=0.99){
     var.cutoff <- quantile(data[,get(var)],threshold,na.rm=T)
@@ -427,12 +428,12 @@ Tau_slide<-slide_data[chr_slide,
   
   lapply(statstoplot,cutoff_calculation)
   
-  png(sprintf("./result/%s_RobLaw_BootEchoGos_1000SNP.png",statstoplot), width = 5000, height = 2000,res=350)  
+  png(sprintf("./result/%s_RobLaw_BootEchoGosSay_phy_1000SNP.png",statstoplot), width = 5000, height = 2000,res=350)  
   plot_bin_genome(dat=dat_plot,statstoplot)
   dev.off()
   
   for (chromosome in 1:21) {
-    png(filename=sprintf("./result/chr_1000SNP_RobLaw_BootEchoGos/chr%s.divergence_0.99.png", chromosome),width = 4000, height = 2000,res=300)
+    png(filename=sprintf("./result/chr_1000SNP_RobLaw_BootEchoGosSay_phy/chr%s.divergence_0.99.png", chromosome),width = 4000, height = 2000,res=300)
     plot_bin_LG(dat_plot,pop=c("",""), focalLG=chromosome, statstoplot=statstoplot)
     dev.off()
   } 
@@ -621,7 +622,7 @@ statstoplot = c("Rob_Coverage","Gos_Coverage")
 plot_cov <- function(dat, focalLG, minpos, maxpos, gene.name, gene.id, exon, statstoplot, y_lab){
   
   options(scipen=5)
-  col<-c("darkgreen","darkmagenta")
+  col<-c("red","black")
   
   for(i in 1:length(statstoplot)){
     
@@ -635,7 +636,7 @@ plot_cov <- function(dat, focalLG, minpos, maxpos, gene.name, gene.id, exon, sta
   axis(2, cex.axis=1.2)
   
   legend('bottomright', statstoplot, 
-         lty=1, col=c("darkgreen","darkmagenta"), bty='n', cex=1.2)
+         lty=1, col=c("red","black"), bty='n', cex=1.2)
   #text(paste("LG",focalLG," (Mb)"),pos=1,cex=1.5)
 }
 
@@ -646,7 +647,7 @@ for (i in 1:region_to_plot[,.N]) {
   region_end_plot<-region_to_plot[i,end]
   
   #png(filename=sprintf("./result/Region_zoomin/LG%s_%s-%s_RobLaw_BootEchoGos.png",LGn_plot,region_start_plot/1e6,region_end_plot/1e6),width = 3500, height = 2000,res=300)
-  pdf(file="./result/Evol2019_poster_pbs_zoominLG12.75_cov.pdf", width = 15, height = 4)
+  pdf(file="./result/Evol2019_poster_pbs_zoominLG12.75_cov_red_black.pdf", width = 15, height = 4)
   gene_info_plot<-gene_info[Start>region_start_plot & Stop<region_end_plot & LGn==LGn_plot,]
   gene_name_plot<-gene_info_plot[full==TRUE,gene.name]
   gene_id_plot<-gene_info_plot[full==TRUE,GeneID]

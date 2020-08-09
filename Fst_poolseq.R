@@ -88,12 +88,12 @@ outgroup="say"
 
 col_keep<-append(c("LGn", "Pos", "Base_A", "Base_a"), 
                  c(paste0(pop1,"_N_A"),paste0(pop2,"_N_A"),paste0(outgroup,"_N_A"),
-                 paste0(pop1,"_Nreads"),paste0(pop2,"_Nreads"),paste0(outgroup,"_N_A"),
+                 paste0(pop1,"_Nreads"),paste0(pop2,"_Nreads"),paste0(outgroup,"_Nreads"),
                  paste0(pop1,"_vs_",pop2),paste0(pop1,"_vs_",outgroup),paste0(pop2,"_vs_",outgroup)))
 pop1_pop2_Fst<-Fst[,..col_keep]
-setnames(pop1_pop2_Fst,-(1:4),c("pop1_N_A","pop2_N_A","outgroup_N_A",
-                                "pop1_Nreads","pop2_Nreads","outgroup_Nreads",
-                                "pop1_pop2_Fst","pop1_outgroup_Fst","pop2_outgroup_Fst"))
+# setnames(pop1_pop2_Fst,-(1:4),c("pop1_N_A","pop2_N_A","outgroup_N_A",
+#                                 "pop1_Nreads","pop2_Nreads","outgroup_Nreads",
+#                                 "pop1_pop2_Fst","pop1_outgroup_Fst","pop2_outgroup_Fst"))
 
 #################################################################
 #  1.  Calculate PBS and other statistics
@@ -103,6 +103,7 @@ setnames(pop1_pop2_Fst,-(1:4),c("pop1_N_A","pop2_N_A","outgroup_N_A",
   # calculate allele frequency
   pop1_pop2_Fst[,pop1_FreqA := pop1_N_A/pop1_Nreads]
   pop1_pop2_Fst[,pop2_FreqA := pop2_N_A/pop2_Nreads]
+  pop1_pop2_Fst[,outgroup_FreqA :=outgroup_N_A/outgroup_Nreads]
   pop1_pop2_Fst[,AFD_pop1_pop2 := abs(pop1_FreqA-pop2_FreqA)]
   
   # calculate populatin branch statistics
